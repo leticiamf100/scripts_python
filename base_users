@@ -1,0 +1,166 @@
+import os
+import requests
+from supabase import create_client
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+
+load_dotenv()
+
+# Obter as variáveis de ambiente para URL e chave do Supabase
+url_supabase = os.environ.get("SUPABASE_URL")
+key_supabase = os.environ.get("SUPABASE_KEY")
+
+# Criar cliente Supabase
+supabase_client = create_client(url_supabase, key_supabase)
+
+# Login para ter autorização
+supabase_client.auth.sign_in_with_password({"email": "SEU_EMAIL", "password": "SUA_SENHA"})
+
+# URL para a solicitação de login de usuário 
+url_login = "https://apiv2dev.sga.bet/integrations/user/login"
+
+# Credenciais de login
+payload = {
+    'login': 'LOGIN CLIENTE',
+    'password': 'SENHA CLIENTE'
+}
+
+# Cabeçalhos da solicitação
+headers = {
+    'x-api-key': 'SUA_KEY'
+}
+
+# Realizar solicitação de login
+response_login = requests.post(url_login, headers=headers, data=payload)
+login_data = response_login.json()
+
+# Obter token JWT do resultado do login
+jwt_token = login_data.get('token_jwt')
+
+# URL para a solicitação de informações dos usuários
+url_user_info = "https://apiv2dev.sga.bet/integrations/players/listInfos"
+
+# Calcular a data de ontem
+yesterday = datetime.now() - timedelta(days=1)
+start_date = yesterday.strftime('%Y-%m-%d 00:00:01')
+final_date = yesterday.strftime('%Y-%m-%d 23:59:59')
+
+# Payload para a solicitação de informações dos usuários
+payload_user_info = {
+    'start_date': '2024-04-15 00:00:01',
+    'final_date': '2024-04-21 23:59:59'    
+}
+
+# Cabeçalhos para a solicitação de informações dos usuários
+headers_user_info = {
+    'x-api-key': 'SUA_KEY',
+    'Application-Authorization': f'{jwt_token}'
+}
+
+try:
+    # Realizar solicitação de informações dos usuários
+    response_user_info = requests.post(url_user_info, headers=headers_user_info, data=payload_user_info)
+    response_user_info.raise_for_status()  # Lança uma exceção se a resposta não for bem-sucedida
+
+    user_data = response_user_info.json()
+
+    formatted_data = []
+
+    for user in user_data.get('data', []):
+        # Inicializa um dicionário vazio para armazenar os dados do usuário formatados
+        formatted_user = {}
+
+        # Recuperar informações do usuário da resposta
+        user_id = user.get('user_id')
+        user_name = user.get('user_name')
+        status = user.get('status')
+        register_date = user.get('register_date')
+        last_login = user.get('last_login')
+        online_balance = user.get('online_balance')
+        bonus_balance = user.get('bonus_balance')
+        reliability_factor = user.get('reliability_factor')
+        phone = user.get('phone')
+        email = user.get('email')
+        birth_date = user.get('birth_date')
+        zip_code = user.get('zip_code')
+        county_name = user.get('county_name')
+        state_name = user.get('state_name')
+        first_deposit_date = user.get('first_deposit_date')
+        last_deposit_date = user.get('last_deposit_date')
+        affiliate_id = user.get('affiliate_id')
+        affiliate_name = user.get('affiliate_name')
+        regional_id = user.get('regional_id')
+        regional_namem = user.get('regional_namem')
+        local_id = user.get('local_id')
+        local_name = user.get('local_name')
+
+        # Garantir a formatação adequada dos campos de registro de data e hora
+        def format_timestamp(timestamp):
+            if timestamp:
+                try:
+                    return datetime.fromisoformat(timestamp).isoformat()
+                except ValueError:
+                    return None
+            else:
+                return None
+
+        # Garantir a formatação adequada dos campos numéricos
+        def format_numeric(value):
+            if value == "":
+                return None
+            else:
+                return value
+
+        # Construir os dados do usuário formatados
+        formatted_user = {
+            'user_id': user_id,
+            'user_name': user_name,
+            'status': status,
+            'register_date': format_timestamp(register_date),
+            'last_login': format_timestamp(last_login),
+            'online_balance': format_numeric(online_balance),
+            'bonus_balance': format_numeric(bonus_balance),
+            'reliability_factor': format_numeric(reliability_factor),
+            'phone': phone,
+            'email': email,
+            'birth_date': format_timestamp(birth_date),
+            'zip_code': zip_code,
+            'county_name': county_name,
+            'state_name': state_name,
+            'first_deposit_date': format_timestamp(first_deposit_date),
+            'last_deposit_date': format_timestamp(last_deposit_date),
+            'affiliate_id': format_numeric(affiliate_id),
+            'affiliate_name': affiliate_name,
+            'regional_id': regional_id,
+            'regional_namem': regional_namem,
+            'local_id': local_id,
+            'local_name': local_name
+        }
+
+        # Construir os dados do usuário formatados
+        formatted_data.append(formatted_user)
+    
+    # Classificar dados formatados por register_date em ordem crescente
+    formatted_data.sort(key=lambda x: x['register_date'])
+
+    # Insira dados formatados na tabela Supabase
+    for user_info in formatted_data:
+        # Limpar caracteres nulos do campo user_name
+        user_info['user_name'] = user_info['user_name'].replace('\x00', '')
+        # Inserir em supabase
+        supabase_client.table("CLIENTE_users").insert(user_info).execute()
+        print(f'usuario {user_info.get('user_id')}, register_date: {user_info.get('register_date')} inserido no BD')
+    
+    # Logout para terminar o script
+    supabase_client.auth.sign_out()
+
+except requests.exceptions.HTTPError as err:
+    print(f"Erro na solicitação: {err}")
+    print(f"Resposta do servidor: {err.response.content}")
+except Exception as e:
+    print(f"An error occurred: {e}")
+    print(f"Object that caused the error: {user_info}")
+
+
+# Logout para terminar o script
+supabase_client.auth.sign_out()
