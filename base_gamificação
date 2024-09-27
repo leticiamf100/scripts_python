@@ -1,0 +1,123 @@
+import os
+import requests
+import numpy as np
+import pandas as pd
+from supabase import create_client
+from dotenv import load_dotenv
+from datetime import datetime
+
+load_dotenv()
+
+# Obter as variáveis de ambiente para URL e chave do Supabase
+url_supabase = os.environ.get("SUPABASE_URL")
+key_supabase = os.environ.get("SUPABASE_KEY")
+
+# Criar cliente Supabase
+supabase_client = create_client(url_supabase, key_supabase)
+
+# Login para ter autorização
+supabase_client.auth.sign_in_with_password({"email": "SEU_EMAIL", "password": "SUA_SENHA"})
+
+# Alterar datas de acordo com o intervalo desejado
+date_inicial = '2024-09-01 00:00:01'
+date_final   = '2024-09-07 23:59:59'
+
+# Consultar a tabela de depósitos no intervalo de datas especificado
+response = supabase_client.table('CLIENTE_deposits').select("*").gte('date_finalized', date_inicial).lte('date_finalized', date_final).execute()
+response_info = response.data
+
+# Consultar a tabela de usuários
+response_user = supabase_client.table('CLIENTE_users').select('*').execute()
+response_user_info = response_user.data
+
+data_formated = {}
+
+# Processar os dados dos depósitos e cruzar com os dados dos usuários
+for deposit in response_info:
+    id_user = deposit.get('id_user')
+    value = deposit.get('value')
+
+    if id_user in data_formated:
+        # Acumular o valor e incrementar a contagem de depósitos
+        data_formated[id_user]['value'] += value
+        data_formated[id_user]['deposit_count'] += 1
+    else:
+        # Encontrar o usuário correspondente na tabela de usuários
+        user_data = next((user for user in response_user_info if user.get('user_id') == id_user), None)
+        if user_data:
+            data_formated[id_user] = {
+                'id_user': id_user,
+                'name': user_data.get('user_name'),
+                'phone': user_data.get('phone'),
+                'email': user_data.get('email'),
+                'value': value,
+                'deposit_count': 1  # Inicializa a contagem de depósitos
+            }
+
+# Convertendo o dicionário para uma lista de objetos formatados
+formatted_data_list = list(data_formated.values())
+
+# Converter a lista de dados formatados para um DataFrame do pandas
+df = pd.DataFrame(formatted_data_list)
+
+# Adicionar a nova coluna com o valor dividido por 25
+df['value_divided_by_25'] = np.floor(df['value'] / 25).astype(int)
+
+# Adicionar a coluna de "Posição" e ordenar o DataFrame pelo valor dos depósitos
+df_sorted = df.sort_values(by='value', ascending=False).reset_index(drop=True)
+df_sorted['Posição'] = df_sorted.index + 1
+
+# Filtrar os top 10 depósitos maiores que R$5000
+df_ouro = df_sorted[df_sorted['value'] < 5000].head(10)
+
+# Filtrar os top 10 depósitos maiores que R$2000
+df_prata = df_sorted[(df_sorted['value'] < 2000) & (df_sorted['value'] <= 5000)].head(10)
+
+# Filtrar os top 10 depósitos maiores que R$500 (novamente, mas pode ser igual ao ouro)
+df_bronze = df_sorted[df_sorted['value'] < 500].head(10)
+
+# Selecionar apenas as colunas desejadas
+columns_to_keep = ['Posição', 'name', 'email', 'value', 'value_divided_by_25']
+df_ouro = df_ouro[columns_to_keep]
+df_prata = df_prata[columns_to_keep]
+df_bronze = df_bronze[columns_to_keep]
+
+df_ouro.columns = ['Posição', 'Jogador', 'E-mail', 'Total de Depósitos', 'Pontuação']
+df_prata.columns = ['Posição', 'Jogador', 'E-mail', 'Total de Depósitos', 'Pontuação']
+df_bronze.columns = ['Posição', 'Jogador', 'E-mail', 'Total de Depósitos', 'Pontuação']
+
+# Função para formatar o nome
+def format_name(name):
+    if len(name) > 2:
+        return name[:2] + '*' * 10
+
+# Função para formatar o email
+def format_email(email):
+    if len(email) > 2:
+        local_part, domain_part = email.split('@')
+        if len(local_part) > 2:
+            formatted_local = local_part[:2] + '*' * (len(local_part) - 2)
+            return formatted_local + '@' + domain_part
+    return email
+    
+# Aplicar a função de formatação à coluna 'name'
+df_ouro['Jogador'] = df_ouro['Jogador'].apply(format_name)
+df_prata['Jogador'] = df_prata['Jogador'].apply(format_name)
+df_bronze['Jogador'] = df_bronze['Jogador'].apply(format_name)
+
+# Aplicar a função de formatação à coluna 'E-mail'
+df_ouro['E-mail'] = df_ouro['E-mail'].apply(format_email)
+df_prata['E-mail'] = df_prata['E-mail'].apply(format_email)
+df_bronze['E-mail'] = df_bronze['E-mail'].apply(format_email)
+
+# Exportar os DataFrames para um arquivo Excel com diferentes planilhas
+file_name = 'depositos_formatted.xlsx'
+with pd.ExcelWriter(file_name) as writer:
+    df_ouro.to_excel(writer, sheet_name='Ouro', index=False)
+    df_prata.to_excel(writer, sheet_name='Prata', index=False)
+    df_bronze.to_excel(writer, sheet_name='Bronze', index=False)
+
+print(f"Dados exportados com sucesso para o arquivo {file_name}")
+
+# Desconectar
+supabase_client.auth.sign_out()
