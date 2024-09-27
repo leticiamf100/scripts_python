@@ -1,0 +1,142 @@
+import os
+import requests
+from supabase import create_client
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+
+load_dotenv()
+
+# Obter as variáveis de ambiente para URL e chave do Supabase
+url_supabase = os.environ.get("SUPABASE_URL")
+key_supabase = os.environ.get("SUPABASE_KEY")
+
+# Criar cliente Supabase
+supabase_client = create_client(url_supabase, key_supabase)
+
+# Login para ter autorização
+supabase_client.auth.sign_in_with_password({"email": "SEU_EMAIL", "password": "SUA_SENHA"})
+
+# URL para a solicitação de login de usuário
+url_login = "https://apiv2dev.sga.bet/integrations/user/login"
+
+# Credenciais de login
+payload = {
+    'login': 'LOGIN',
+    'password': 'SENHA'
+}
+
+# Cabeçalhos da solicitação
+headers = {
+    'x-api-key': 'SUA_KEY'
+}
+
+# Realizar solicitação de login
+response_login = requests.post(url_login, headers=headers, data=payload)
+login_data = response_login.json()
+
+# Obter token JWT do resultado do login
+jwt_token = login_data.get('token_jwt')
+
+# URL para a solicitação de informações dos usuários
+url_user_info = "https://apiv2dev.sga.bet/integrations/bets/casinoGrouped"
+
+# Calcular a data de ontem
+yesterday = datetime.now() - timedelta(days=1)
+start_date = yesterday.strftime('%Y-%m-%d 00:00:01')
+final_date = yesterday.strftime('%Y-%m-%d 23:59:59')
+start_date = "2024-07-25 00:00:02"
+final_date = "2024-07-26 00:00:02"
+
+# Payload para a solicitação de informações dos usuários
+payload_user_info = {
+    'start_date': start_date,
+    'final_date': final_date,
+    'group': 'game'    
+}
+
+# Cabeçalhos para a solicitação de informações dos usuários
+headers_user_info = {
+    'x-api-key': 'SUA_KEY',
+    'Application-Authorization': f'{jwt_token}'
+}
+
+try:
+    # Realizar solicitação de informações dos usuários
+    response = requests.post(url_user_info, headers=headers_user_info, data=payload_user_info)
+    response.raise_for_status()  # Lança uma exceção se a resposta não for bem-sucedida
+
+    cassino_data = response.json()
+
+    formatted_data = []
+
+    for game in cassino_data.get('data', []):
+        # Inicializar um dicionário vazio para armazenar os dados do usuário formatados
+        formatted_game = {}
+
+        # Recuperar informações do usuário da resposta
+        name_game = game.get('name_game')
+        game_identifier = game.get('game_identifier')
+        name_producer = game.get('name_producer')
+        name_group = game.get('name_group')
+        categorie_provider = game.get('categorie_provider')
+        live = game.get('live')
+        name_provider = game.get('name_provider')
+        count_bet = game.get('count_bet')
+        total_bet = game.get('total_bet')
+        count_prize = game.get('count_prize')
+        total_prize = game.get('total_prize')
+        ggr = game.get('ggr')
+        
+
+        # Garantir a formatação adequada dos campos de registro de data e hora
+        def format_timestamp(timestamp):
+            if timestamp:
+                try:
+                    return datetime.fromisoformat(timestamp).isoformat()
+                except ValueError:
+                    return None
+            else:
+                return None
+
+        # Garantir a formatação adequada dos campos numéricos
+        def format_numeric(value):
+            if value == "":
+                return None
+            else:
+                return value
+
+        # Construir os dados do usuário formatados
+        formatted_user = {
+            'name_game': name_game,
+            'game_identifier': game_identifier,
+            'name_producer': name_producer,
+            'name_group': name_group,
+            'categorie_provider': categorie_provider,
+            'live': live,
+            'name_provider': name_provider,
+            'count_bet': count_bet,
+            'total_bet': total_bet,
+            'count_prize': count_prize,
+            'total_prize': total_prize,
+            'ggr': ggr,
+            'start_date': start_date,
+            'final_date': final_date
+        }
+
+        # Acrescente os dados do usuário formatados à lista
+        formatted_data.append(formatted_user)
+        print(game)
+
+    for i in formatted_data:
+        supabase_client.table("CLIENTE_cassino").insert(i).execute()
+        print(f'game {i.get('name_game')} inserido no BD')
+
+except requests.exceptions.HTTPError as err:
+    print(f"Erro na solicitação: {err}")
+    print(f"Resposta do servidor: {err.response.content}")
+except Exception as e:
+    print(f"An error occurred: {e}")
+    print(f"Object that caused the error: {game}")
+
+# Logout para terminar o script
+supabase_client.auth.sign_out()
