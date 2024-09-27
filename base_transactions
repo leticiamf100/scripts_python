@@ -1,0 +1,151 @@
+mport os
+import requests
+from supabase import create_client
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+
+load_dotenv()
+
+# Obter as variáveis de ambiente para URL e chave do Supabase
+url_supabase = os.environ.get("SUPABASE_URL")
+key_supabase = os.environ.get("SUPABASE_KEY")
+
+# Criar cliente Supabase
+supabase_client = create_client(url_supabase, key_supabase)
+
+# Login para ter autorização
+supabase_client.auth.sign_in_with_password({"email": "SEU_EMAIL", "password": "SUA_SENHA"})
+
+# URL para a solicitação de login de usuário
+url_login = "https://apiv2dev.sga.bet/integrations/user/login"
+
+# Credenciais de login
+payload = {
+    'login': 'LOGIN CLIENTE',
+    'password': 'SENHA CLIENTE'
+}
+
+# Cabeçalhos da solicitação
+headers = {
+    'x-api-key': 'SUA_KEY'
+}
+
+# Realizar solicitação de login
+response_login = requests.post(url_login, headers=headers, data=payload)
+login_data = response_login.json()
+
+# Obter token JWT do resultado do login
+jwt_token = login_data.get('token_jwt')
+
+# URL para a solicitação de transações de depósitos e retiradas
+url = "https://apiv2dev.sga.bet/integrations/transactions/depositsAndWithdraws"
+
+# Calcular a data de ontem
+yesterday = datetime.now() - timedelta(days=1)
+start_date = yesterday.strftime('%Y-%m-%d 00:00:01')
+final_date = yesterday.strftime('%Y-%m-%d 23:59:59')
+
+# Payload para a solicitação de transações
+payload = {
+    'start_date': '2024-04-15 00:00:01',
+    'final_date': '2024-04-21 23:59:59'
+}
+
+# Cabeçalhos da solicitação de transações
+headers = {
+    'x-api-key': 'SUA_KEY',
+    'Application-Authorization': f'{jwt_token}'
+}
+
+try:
+    # Realizar solicitação de transações
+    response = requests.post(url, headers=headers, data=payload)
+    response.raise_for_status()
+    
+    withdraw_deposit_data = response.json()
+
+    formatted_deposit = []
+
+    formatted_withdraw = []
+
+    for user in withdraw_deposit_data.get('data', []):
+        # Inicializar um dicionário vazio para armazenar os dados do usuário formatados
+        formatted_data = {}
+
+        # Recuperar informações do usuário da resposta
+        provider_name = user.get('provider_name')
+        id_user = user.get('id_user')
+        name_user = user.get('name_user')
+        value = user.get('value')
+        date_finalized = user.get('date_finalized')
+        name_operation = user.get('name_operation')
+
+        user_request = supabase_client.table('CLIENTE_users').select("*").eq('user_id', id_user).execute()
+        print(f'fetching ftd e affiliate_id para o user {id_user}')
+
+        if len(user_request.data) >= 1:
+            affiliate_id = user_request.data[0].get('affiliate_id')
+            first_deposit_date = user_request.data[0].get('first_deposit_date')
+        else:
+            affiliate_id = 0
+            first_deposit_date = 'none'
+
+        # Garantir a formatação adequada dos campos de registro de data e hora
+        def format_timestamp(timestamp):
+            if timestamp:
+                try:
+                    return datetime.fromisoformat(timestamp).isoformat()
+                except ValueError:
+                    return None
+            else:
+                return None
+
+        # Garantir a formatação adequada dos campos numéricos
+        def format_numeric(value):
+            if value == "":
+                return None
+            else:
+                return value
+
+        # Construir os dados do usuário formatados
+        formatted_data = {
+            'provider_name': provider_name,
+            'id_user': format_numeric(id_user),
+            'name_user': name_user,
+            'value': format_numeric(value),
+            'date_finalized': format_timestamp(date_finalized),
+            'name_operation': name_operation,
+            'affiliate_id': affiliate_id,
+            'first_deposit_date': format_timestamp(first_deposit_date)
+        }
+
+        # Acrescente os dados do usuário formatados à lista
+        if name_operation == "Compra de Crédito Online":
+            formatted_deposit.append(formatted_data)            
+        else:
+            formatted_withdraw.append(formatted_data)
+
+    formatted_deposit_sorted = sorted(formatted_deposit, key=lambda x: x['date_finalized'])
+
+    formatted_withdraw_sorted = sorted(formatted_withdraw, key=lambda x: x['date_finalized'])
+
+    # Insira dados formatados na tabela Supabase
+    for user_info in formatted_withdraw_sorted:
+        supabase_client.table("CLIENTE_withdraw").insert(user_info).execute()
+        print(f"inserido saque {user_info.get('date_finalized')}")
+
+    for user_info in formatted_deposit_sorted:
+        supabase_client.table("CLINTE_deposits").insert(user_info).execute()  
+        print(f"inserido deposito {user_info.get('date_finalized')}")
+    
+    # Logout para terminar o script
+    supabase_client.auth.sign_out()
+    
+   
+
+except requests.exceptions.HTTPError as err:
+    print(f"Erro na solicitação: {err}")
+    print(f"Resposta do servidor: {err.response.content}")
+
+# Logout para terminar o script
+supabase_client.auth.sign_out()
